@@ -341,7 +341,8 @@ async function exportMp4() {
     const output = new mb.Output({ format: new mb.Mp4OutputFormat({ fastStart: "in-memory" }), target: new mb.BufferTarget() });
     const c = document.createElement("canvas"); c.width = W; c.height = H;
     const cctx = c.getContext("2d");
-    const videoSource = new mb.CanvasSource(c, { codec: "avc", quality: new mb.Quality({ bitrate: W * H * fps * 0.12 }) });
+    // flat graphics compress well; the whole file is held in memory until finalize, so keep this modest
+    const videoSource = new mb.CanvasSource(c, { codec: "avc", quality: new mb.Quality({ bitrate: W * H * fps * 0.05 }) });
     const audioSource = new mb.AudioBufferSource({ codec: "aac", quality: new mb.Quality({ bitrate: 192e3 }) });
     output.addVideoTrack(videoSource, { frameRate: fps });
     output.addAudioTrack(audioSource);
