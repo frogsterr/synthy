@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synthy note styles</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='2' width='6' height='12' rx='1.5' fill='%233f79cf'/%3E%3Crect x='9' y='2' width='6' height='12' rx='1.5' fill='%234f9f66'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #0f0f11; --panel: #19191c; --line: #2a2a2f; --text: #e8e8e4; --muted: #8d8d94; --right: #4f9f66;
+    --sans: ui-sans-serif, system-ui, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; display: flex; flex-direction: column; overflow: hidden; }
+  header { background: var(--panel); border-bottom: 1px solid var(--line); padding: .55rem 1rem; display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1.4rem; }
+  header a.home { color: var(--muted); text-decoration: none; font-weight: 600; }
+  header a.home:hover { color: var(--text); }
+  .transport { display: flex; align-items: center; gap: .6rem; flex: 1 1 16rem; }
+  .transport input[type=range] { flex: 1; }
+  label { display: inline-flex; align-items: center; gap: .4rem; color: var(--muted); white-space: nowrap; }
+  label output { color: var(--text); font-variant-numeric: tabular-nums; min-width: 3rem; }
+  input[type=range] { accent-color: #d6d6d0; height: 1.2rem; }
+  .knobs input[type=range] { width: 7rem; }
+  .knobs { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem 1.1rem; }
+  button, a.btn { font: inherit; font-weight: 600; color: var(--bg); background: #e6e6e1; border: 0; border-radius: 4px; padding: .4rem .85rem; cursor: pointer; text-decoration: none; }
+  .quiet { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  button:focus-visible, a:focus-visible { outline: 2px solid #e6e6e1; outline-offset: 2px; }
+  #grid { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line); }
+  @media (max-width: 1100px) { #grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { #grid { grid-template-columns: 1fr; } }
+  #grid.solo { grid-template-columns: 1fr; }
+  #grid.solo .panel:not(.big) { display: none; }
+  .panel { display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+  .panel .stage { flex: 1; min-height: 0; position: relative; cursor: zoom-in; }
+  .panel.big .stage { cursor: zoom-out; }
+  .panel canvas { display: block; width: 100%; height: 100%; }
+  .panel .caption { padding: .6rem .8rem; border-top: 1px solid var(--line); display: grid; gap: .3rem; }
+  .caption b { font-size: .95rem; }
+  .caption p { margin: 0; color: var(--muted); line-height: 1.35; }
+  .caption .row { display: flex; gap: .5rem; align-items: center; margin-top: .2rem; }
+  .caption .chosen { color: var(--right); font-weight: 600; }
+  #hint { color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <a class="home" href="/">Synthy</a>
+  <a class="btn quiet" id="back" href="#">Back to player</a>
+  <div class="transport">
+    <button id="playBtn">Play</button>
+    <input type="range" id="seek" min="0" max="10000" value="0" aria-label="Position">
+  </div>
+  <div class="knobs">
+    <label>Speed <input type="range" id="speed" min="25" max="200" step="5" value="100"><output id="speedOut">100%</output></label>
+    <label>Scale <input type="range" id="scale" min="40" max="400" step="5" value="180"><output id="scaleOut">180</output></label>
+    <label>Width <input type="range" id="width" min="50" max="100" step="2" value="90"><output id="widthOut">90%</output></label>
+    <span id="hint">Click a panel to see it alone. Silent, same clock for all four.</span>
+  </div>
+</header>
+<div id="grid"></div>
+
+<script type="module">
+import { STYLES, geometry, draw, isBlack } from "/static/render.js";
+
+const $ = (id) => document.getElementById(id);
+const jobId = location.pathname.split("/")[2];
+$("back").href = "/jobs/" + jobId + "/play";
+
+const opts = { speed: 1, scale: 180, width: 0.9, measureLines: false, suspects: false, rate: 1, style: "classic" };
+let saved = {};
+try { saved = JSON.parse(localStorage.getItem("synthy-player") || "{}"); } catch (e) { /* none */ }
+if (saved.scale) $("scale").value = saved.scale;
+if (saved.width) $("width").value = saved.width;
+if (saved.speed) $("speed").value = saved.speed;
+
+function applyKnobs() {
+  opts.speed = +$("speed").value / 100;
+  opts.scale = +$("scale").value;
+  opts.width = +$("width").value / 100;
+  $("speedOut").textContent = Math.round(opts.speed * 100) + "%";
+  $("scaleOut").textContent = opts.scale;
+  $("widthOut").textContent = Math.round(opts.width * 100) + "%";
+}
+for (const id of ["speed", "scale", "width"]) $(id).addEventListener("input", applyKnobs);
+applyKnobs();
+
+const panels = [];
+const grid = $("grid");
+for (const [key, s] of Object.entries(STYLES)) {
+  const panel = document.createElement("div");
+  panel.className = "panel";
+  panel.innerHTML = `
+    <div class="stage"><canvas></canvas></div>
+    <div class="caption"><b>${s.name}</b><p>${s.blurb}</p>
+      <div class="row"><button class="use quiet">Use in player</button><span class="chosen" hidden>Selected</span></div>
+    </div>`;
+  const canvas = panel.querySelector("canvas");
+  panel.querySelector(".stage").addEventListener("click", () => {
+    const solo = panel.classList.toggle("big");
+    grid.classList.toggle("solo", solo);
+    for (const p of panels) if (p.panel !== panel) p.panel.classList.remove("big");
+    resizeAll();
+  });
+  panel.querySelector(".use").addEventListener("click", () => {
+    try {
+      const cur = JSON.parse(localStorage.getItem("synthy-player") || "{}");
+      localStorage.setItem("synthy-player", JSON.stringify({ ...cur, style: key, scale: $("scale").value, width: $("width").value }));
+    } catch (e) { /* none */ }
+    for (const p of panels) p.panel.querySelector(".chosen").hidden = p.key !== key;
+  });
+  panel.querySelector(".chosen").hidden = (saved.style || "classic") !== key;
+  grid.appendChild(panel);
+  panels.push({ key, panel, canvas, ctx: canvas.getContext("2d"), w: 0, h: 0 });
+}
+
+function resizeAll() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  for (const p of panels) {
+    const stage = p.panel.querySelector(".stage");
+    p.w = stage.clientWidth; p.h = stage.clientHeight;
+    p.canvas.width = Math.round(p.w * dpr); p.canvas.height = Math.round(p.h * dpr);
+    p.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+}
+window.addEventListener("resize", resizeAll);
+resizeAll();
+
+// ---------- clock (silent) ----------
+let data = null, tempo = 80, startBeat = 0, endBeat = 1, lo = 21, hi = 108;
+let playing = false, beat = 0, anchorBeat = 0, anchorTime = 0;
+const bps = () => tempo / 60 * opts.speed;
+const now = () => performance.now() / 1000;
+const currentBeat = () => playing ? anchorBeat + (now() - anchorTime) * bps() : beat;
+function play() { anchorBeat = beat >= endBeat ? startBeat : beat; anchorTime = now(); playing = true; $("playBtn").textContent = "Pause"; }
+function pause() { beat = currentBeat(); playing = false; $("playBtn").textContent = "Play"; }
+$("playBtn").addEventListener("click", () => (playing ? pause() : play()));
+$("speed").addEventListener("input", () => { if (playing) { beat = currentBeat(); anchorBeat = beat; anchorTime = now(); } });
+$("seek").addEventListener("input", (e) => {
+  const b = startBeat + (+e.target.value / 10000) * (endBeat - startBeat);
+  if (playing) { anchorBeat = b; anchorTime = now(); } else beat = b;
+});
+window.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT") return;
+  if (e.code === "Space") { e.preventDefault(); playing ? pause() : play(); }
+});
+
+function frame() {
+  if (data) {
+    const b = currentBeat();
+    if (playing && b >= endBeat) { pause(); beat = endBeat; }
+    opts.rate = bps();
+    for (const p of panels) {
+      if (grid.classList.contains("solo") && !p.panel.classList.contains("big")) continue;
+      // a solo panel shows the whole keyboard; the 4-up view zooms into the piece's range
+      const g = p.panel.classList.contains("big") ? geometry(p.w, p.h) : geometry(p.w, p.h, lo, hi);
+      draw(p.ctx, g, b, { ...opts, style: p.key }, data);
+    }
+    if (document.activeElement !== $("seek")) $("seek").value = Math.round((b - startBeat) / (endBeat - startBeat) * 10000);
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+fetch("/jobs/" + jobId + "/notes").then((r) => r.json()).then((payload) => {
+  tempo = payload.tempo;
+  const notes = payload.notes.slice().sort((a, b) => a.onset - b.onset);
+  data = { notes, measures: payload.measures, maxDuration: notes.reduce((m, n) => Math.max(m, n.duration), 1) };
+  endBeat = Math.max(payload.length, notes.reduce((m, n) => Math.max(m, n.onset + n.duration), 0)) + 1;
+  startBeat = -2;
+  beat = startBeat;
+  // keyboard window: 5th to 95th percentile of pitches, widened to whole octaves on C
+  const pitches = notes.map((n) => n.pitch).sort((a, b) => a - b);
+  const pLo = pitches[Math.floor(pitches.length * 0.05)] ?? 21, pHi = pitches[Math.floor(pitches.length * 0.95)] ?? 108;
+  lo = Math.max(21, Math.floor(pLo / 12) * 12);
+  hi = Math.min(108, Math.ceil((pHi + 1) / 12) * 12 - 1);
+  while (isBlack(lo)) lo++;
+  while (isBlack(hi)) hi--;
+  document.title = payload.name + " · styles";
+});
+</script>
+</body>
+</html>

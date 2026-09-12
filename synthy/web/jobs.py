@@ -69,6 +69,28 @@ def _report(r: ConversionResult) -> dict:
     }
 
 
+def notes_payload(job: Job) -> dict:
+    """Everything the in-browser player needs, in beats (quarter notes)."""
+    r = job.result
+    assert r is not None
+    measures = []
+    start = Fraction(0)
+    for m in r.reports:
+        measures.append({"index": m.index, "page": m.page, "start": _f(start),
+                         "length": _f(m.expected), "suspect": m.suspect})
+        start += m.expected
+    return {
+        "name": job.stem,
+        "tempo": job.tempo,
+        "length": _f(start),
+        "notes": [
+            {"hand": ev.staff, "pitch": ev.pitch, "onset": _f(ev.onset), "duration": _f(ev.duration)}
+            for ev in r.events
+        ],
+        "measures": measures,
+    }
+
+
 class JobStore:
     def __init__(self, root: Path, engine: Engine | None = None):
         self.root = Path(root)

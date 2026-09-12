@@ -6,11 +6,12 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from synthy.engine import Engine
 from synthy.pipeline import DEFAULT_TEMPO
 from synthy.render import IMAGE_SUFFIXES, parse_page_range
-from synthy.web.jobs import JobStore
+from synthy.web.jobs import Job, JobStore, notes_payload
 
 STATIC = Path(__file__).parent / "static"
 DEFAULT_JOBS_DIR = Path.home() / ".cache/synthy/jobs"
@@ -22,10 +23,33 @@ def create_app(jobs_dir: Path | None = None, engine: Engine | None = None) -> Fa
     app = FastAPI(title="Synthy")
     store = JobStore(jobs_dir or DEFAULT_JOBS_DIR, engine=engine)
     app.state.store = store
+    app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+    def finished(job_id: str) -> Job:
+        job = store.get(job_id)
+        if job is None:
+            raise HTTPException(404, "No such job.")
+        if job.status != "done" or job.result is None:
+            raise HTTPException(409, "The conversion is not finished yet.")
+        return job
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
         return (STATIC / "index.html").read_text()
+
+    @app.get("/jobs/{job_id}/play", response_class=HTMLResponse)
+    def play(job_id: str) -> str:
+        finished(job_id)
+        return (STATIC / "player.html").read_text()
+
+    @app.get("/jobs/{job_id}/styles", response_class=HTMLResponse)
+    def styles(job_id: str) -> str:
+        finished(job_id)
+        return (STATIC / "styles.html").read_text()
+
+    @app.get("/jobs/{job_id}/notes")
+    def job_notes(job_id: str) -> dict:
+        return notes_payload(finished(job_id))
 
     @app.post("/jobs")
     async def create_job(
@@ -59,11 +83,7 @@ def create_app(jobs_dir: Path | None = None, engine: Engine | None = None) -> Fa
 
     @app.get("/jobs/{job_id}/midi")
     def job_midi(job_id: str) -> FileResponse:
-        job = store.get(job_id)
-        if job is None:
-            raise HTTPException(404, "No such job.")
-        if job.status != "done" or not job.midi_path.exists():
-            raise HTTPException(409, "The MIDI is not ready yet.")
+        job = finished(job_id)
         return FileResponse(job.midi_path, media_type="audio/midi", filename=f"{job.stem}.mid")
 
     return app

@@ -28,6 +28,8 @@ def test_convert_end_to_end(tmp_path):
     assert len(result.reports) == 4
     assert [r.page for r in result.reports] == [1, 1, 2, 2]
     assert not result.suspect_measures
+    assert len(result.events) == 4 * (4 + 2)
+    assert result.events == sorted(result.events)
     assert stages[0] == "render" and "transcribe" in stages and stages[-1] == "assemble"
     mid = mido.MidiFile(result.midi_path)
     channels = {m.channel for t in mid.tracks for m in t if m.type == "note_on"}

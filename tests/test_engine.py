@@ -24,13 +24,20 @@ def test_find_audiveris_honors_env(tmp_path, monkeypatch):
 
 def test_find_audiveris_none_when_missing(tmp_path, monkeypatch):
     monkeypatch.setenv(mod.ENV_BINARY, str(tmp_path / "nope"))
-    monkeypatch.setattr(mod, "DEFAULT_BINARY", tmp_path / "also-nope")
+    monkeypatch.setattr(mod, "DEFAULT_BINARIES", (tmp_path / "also-nope",))
     assert find_audiveris() is None
+
+
+def test_find_audiveris_falls_back_to_defaults(tmp_path, monkeypatch):
+    b = _fake_binary(tmp_path)
+    monkeypatch.delenv(mod.ENV_BINARY, raising=False)
+    monkeypatch.setattr(mod, "DEFAULT_BINARIES", (tmp_path / "nope", b))
+    assert find_audiveris() == b
 
 
 def test_missing_binary_raises_engine_error(tmp_path, monkeypatch):
     monkeypatch.delenv(mod.ENV_BINARY, raising=False)
-    monkeypatch.setattr(mod, "DEFAULT_BINARY", tmp_path / "nope")
+    monkeypatch.setattr(mod, "DEFAULT_BINARIES", (tmp_path / "nope",))
     with pytest.raises(EngineError):
         AudiverisEngine().transcribe([tmp_path / "page001.png"], tmp_path / "work")
 

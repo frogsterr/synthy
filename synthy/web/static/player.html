@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synthy player</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='2' width='6' height='12' rx='1.5' fill='%233f79cf'/%3E%3Crect x='9' y='2' width='6' height='12' rx='1.5' fill='%234f9f66'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #0f0f11;
+    --panel: #19191c;
+    --line: #2a2a2f;
+    --text: #e8e8e4;
+    --muted: #8d8d94;
+    --right: #4f9f66;
+    --left: #3f79cf;
+    --suspect: #cf8a1f;
+    --sans: ui-sans-serif, system-ui, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--sans); font-size: 14px;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    background: var(--panel); border-bottom: 1px solid var(--line);
+    padding: .55rem 1rem; display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1.4rem;
+  }
+  header a.home { color: var(--muted); text-decoration: none; font-weight: 600; letter-spacing: .02em; }
+  header a.home:hover { color: var(--text); }
+  #title { font-weight: 600; min-width: 8rem; }
+  .transport { display: flex; align-items: center; gap: .6rem; flex: 1 1 18rem; }
+  .transport input[type=range] { flex: 1; }
+  #time { font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+  .knobs { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem 1.1rem; }
+  label { display: inline-flex; align-items: center; gap: .4rem; color: var(--muted); white-space: nowrap; }
+  label output { color: var(--text); font-variant-numeric: tabular-nums; min-width: 4.5rem; }
+  input[type=range] { accent-color: #d6d6d0; height: 1.2rem; }
+  .knobs input[type=range] { width: 7rem; }
+  input[type=checkbox] { accent-color: var(--right); }
+  select { font: inherit; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: .25rem .4rem; }
+  button, a.btn {
+    font: inherit; font-weight: 600; color: var(--bg); background: #e6e6e1; text-decoration: none;
+    border: 0; border-radius: 4px; padding: .4rem .85rem; cursor: pointer; display: inline-block;
+  }
+  button.quiet, a.btn.quiet { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  button:disabled { opacity: .45; cursor: default; }
+  button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid #e6e6e1; outline-offset: 2px; }
+  #stageWrap { flex: 1; position: relative; min-height: 0; }
+  canvas#stage { display: block; width: 100%; height: 100%; }
+  #overlay {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    background: rgba(15,15,17,.72); color: var(--text); font-size: 1.05rem; text-align: center; padding: 1rem;
+  }
+  #overlay[hidden] { display: none; }
+  #exportPanel {
+    position: absolute; right: 1rem; top: 1rem; width: min(22rem, calc(100% - 2rem));
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 1rem;
+    display: grid; gap: .7rem;
+  }
+  #exportPanel[hidden] { display: none; }
+  #exportPanel h2 { margin: 0; font-size: 1rem; }
+  #exportPanel .row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+  .progress { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+  .progress b { display: block; height: 100%; width: 0; background: var(--right); transition: width .2s; }
+  #exportStatus { color: var(--muted); min-height: 1.2em; }
+  #exportStatus.error { color: #e0655c; }
+  a.saved { color: var(--right); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <a class="home" href="/">Synthy</a>
+  <span id="title"></span>
+  <div class="transport">
+    <button id="playBtn" disabled>Play</button>
+    <input type="range" id="seek" min="0" max="10000" value="0" aria-label="Position">
+    <span id="time">0:00 / 0:00</span>
+  </div>
+  <div class="knobs">
+    <label>Speed <input type="range" id="speed" min="25" max="200" step="5" value="100"><output id="speedOut">100%</output></label>
+    <label>Scale <input type="range" id="scale" min="40" max="400" step="5" value="180"><output id="scaleOut">180 px/beat</output></label>
+    <label>Note width <input type="range" id="width" min="50" max="100" step="2" value="90"><output id="widthOut">90%</output></label>
+    <label>Style <select id="style"></select></label>
+    <label><input type="checkbox" id="measureLines"> Measure lines</label>
+    <label><input type="checkbox" id="suspects" checked> Mark suspect measures</label>
+    <a class="btn quiet" id="stylesLink" href="#">Compare styles</a>
+    <button class="quiet" id="exportBtn" disabled>Export MP4</button>
+  </div>
+</header>
+
+<div id="stageWrap">
+  <canvas id="stage"></canvas>
+  <div id="overlay">Loading the piano…</div>
+  <div id="exportPanel" hidden>
+    <h2>Export as MP4</h2>
+    <div class="row">
+      <label>Size
+        <select id="exportSize">
+          <option value="1920x1080" selected>1920 × 1080</option>
+          <option value="2560x1440">2560 × 1440</option>
+          <option value="1280x720">1280 × 720</option>
+        </select>
+      </label>
+      <label>Frame rate
+        <select id="exportFps">
+          <option value="60" selected>60</option>
+          <option value="30">30</option>
+        </select>
+      </label>
+    </div>
+    <p style="margin:0;color:var(--muted)">Uses the current speed, scale, note width and style.</p>
+    <label><input type="checkbox" id="exportSuspects"> Shade suspect measures in the video</label>
+    <div class="row">
+      <button id="exportGo">Render</button>
+      <button class="quiet" id="exportClose">Close</button>
+    </div>
+    <div class="progress"><b id="exportBar"></b></div>
+    <div id="exportStatus"></div>
+  </div>
+</div>
+
+<script src="/static/piano.js"></script>
+<script type="module">
+import { FIRST, LAST, STYLES, geometry, draw } from "/static/render.js";
+
+const $ = (id) => document.getElementById(id);
+const jobId = location.pathname.split("/")[2];
+const NOTE_NAMES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+
+// ---------- score ----------
+let score = null;          // payload from /jobs/{id}/notes
+let data = null;           // { notes, measures, maxDuration } for the renderer
+let startBeat = 0, endBeat = 0;
+
+// ---------- options ----------
+const opts = { speed: 1, scale: 180, width: 0.9, measureLines: false, suspects: true, rate: 1, style: "classic" };
+const knobs = { speed: $("speed"), scale: $("scale"), width: $("width") };
+
+for (const [key, s] of Object.entries(STYLES)) {
+  const opt = document.createElement("option");
+  opt.value = key; opt.textContent = s.name;
+  $("style").appendChild(opt);
+}
+
+function loadKnobs() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("synthy-player") || "{}");
+    if (saved.speed) knobs.speed.value = saved.speed;
+    if (saved.scale) knobs.scale.value = saved.scale;
+    if (saved.width) knobs.width.value = saved.width;
+    if (saved.style && STYLES[saved.style]) $("style").value = saved.style;
+    if (saved.measureLines != null) $("measureLines").checked = saved.measureLines;
+    if (saved.suspects != null) $("suspects").checked = saved.suspects;
+  } catch (e) { /* storage unavailable */ }
+}
+function applyKnobs() {
+  opts.speed = +knobs.speed.value / 100;
+  opts.scale = +knobs.scale.value;
+  opts.width = +knobs.width.value / 100;
+  opts.style = $("style").value;
+  opts.measureLines = $("measureLines").checked;
+  opts.suspects = $("suspects").checked;
+  $("speedOut").textContent = Math.round(opts.speed * 100) + "%";
+  $("scaleOut").textContent = opts.scale + " px/beat";
+  $("widthOut").textContent = Math.round(opts.width * 100) + "%";
+  try {
+    localStorage.setItem("synthy-player", JSON.stringify({
+      speed: knobs.speed.value, scale: knobs.scale.value, width: knobs.width.value, style: opts.style,
+      measureLines: opts.measureLines, suspects: opts.suspects,
+    }));
+  } catch (e) { /* storage unavailable */ }
+}
+
+// ---------- audio ----------
+const audio = new (window.AudioContext || window.webkitAudioContext)();
+const master = audio.createGain();
+master.gain.value = 0.8;
+master.connect(audio.destination);
+const samples = new Map();     // pitch -> AudioBuffer
+const live = new Set();        // sounding sources, to cut on pause/seek
+
+function noteName(p) { return NOTE_NAMES[p % 12] + (Math.floor(p / 12) - 1); }
+
+async function loadPiano() {
+  const font = window.MIDI.Soundfont.acoustic_grand_piano;
+  const jobs = [];
+  for (let p = FIRST; p <= LAST; p++) {
+    const uri = font[noteName(p)];
+    if (!uri) continue;
+    const b64 = uri.slice(uri.indexOf(",") + 1);
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    jobs.push(audio.decodeAudioData(bytes.buffer).then((buf) => samples.set(p, buf)));
+  }
+  await Promise.all(jobs);
+}
+
+function playSample(ctx, dest, pitch, when, seconds) {
+  const buf = samples.get(pitch);
+  if (!buf) return null;
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const gain = ctx.createGain();
+  const release = 0.28;
+  gain.gain.setValueAtTime(1, when);
+  gain.gain.setValueAtTime(1, when + seconds);
+  gain.gain.exponentialRampToValueAtTime(0.001, when + seconds + release);
+  src.connect(gain).connect(dest);
+  src.start(when);
+  src.stop(when + seconds + release + 0.05);
+  return { src, gain };
+}
+
+function cutLive() {
+  const now = audio.currentTime;
+  for (const v of live) {
+    v.gain.gain.cancelScheduledValues(now);
+    v.gain.gain.setValueAtTime(v.gain.gain.value, now);
+    v.gain.gain.linearRampToValueAtTime(0, now + 0.04);
+    try { v.src.stop(now + 0.06); } catch (e) { /* already stopped */ }
+  }
+  live.clear();
+}
+
+// ---------- transport ----------
+let playing = false;
+let beat = 0;              // position when paused
+let anchorBeat = 0, anchorTime = 0;
+let nextIdx = 0;           // next note to schedule
+const LOOKAHEAD = 0.2;     // seconds
+
+function lowerBound(arr, value) {
+  let lo = 0, hi = arr.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (arr[mid].onset < value) lo = mid + 1; else hi = mid; }
+  return lo;
+}
+function bps() { return score.tempo / 60 * opts.speed; }
+function currentBeat() { return playing ? anchorBeat + (audio.currentTime - anchorTime) * bps() : beat; }
+
+function anchor(b) {
+  anchorBeat = b; anchorTime = audio.currentTime;
+  nextIdx = lowerBound(data.notes, b);
+}
+
+async function play() {
+  if (playing) return;
+  await audio.resume();
+  if (beat >= endBeat) beat = startBeat;
+  anchor(beat);
+  playing = true;
+  $("playBtn").textContent = "Pause";
+}
+
+function pause() {
+  if (!playing) return;
+  beat = currentBeat();
+  playing = false;
+  cutLive();
+  $("playBtn").textContent = "Play";
+}
+
+function seek(b) {
+  b = Math.min(endBeat, Math.max(startBeat, b));
+  if (playing) { cutLive(); anchor(b); } else { beat = b; }
+}
+
+function schedule() {
+  const notes = data.notes;
+  const horizon = currentBeat() + LOOKAHEAD * bps();
+  while (nextIdx < notes.length && notes[nextIdx].onset < horizon) {
+    const n = notes[nextIdx++];
+    const when = anchorTime + (n.onset - anchorBeat) / bps();
+    if (when < audio.currentTime - 0.05) continue;
+    const v = playSample(audio, master, n.pitch, when, n.duration / bps());
+    if (v) { live.add(v); v.src.onended = () => live.delete(v); }
+  }
+}
+
+function fmt(seconds) {
+  seconds = Math.max(0, Math.round(seconds));
+  return Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
+}
+
+// ---------- live canvas ----------
+const canvas = $("stage");
+const ctx2d = canvas.getContext("2d");
+let cssW = 0, cssH = 0;
+
+function resize() {
+  const wrap = $("stageWrap");
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  cssW = wrap.clientWidth; cssH = wrap.clientHeight;
+  canvas.width = Math.round(cssW * dpr); canvas.height = Math.round(cssH * dpr);
+  ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function frame() {
+  if (score) {
+    const b = currentBeat();
+    if (playing) {
+      schedule();
+      if (b >= endBeat) { pause(); beat = endBeat; }
+    }
+    opts.rate = bps();
+    draw(ctx2d, geometry(cssW, cssH), b, opts, data);
+    const seekEl = $("seek");
+    if (document.activeElement !== seekEl) seekEl.value = Math.round((b - startBeat) / (endBeat - startBeat) * 10000);
+    const secs = bps();
+    $("time").textContent = fmt(Math.max(0, b) / secs) + " / " + fmt(endBeat / secs);
+  }
+  requestAnimationFrame(frame);
+}
+
+// ---------- export ----------
+async function exportMp4() {
+  const [W, H] = $("exportSize").value.split("x").map(Number);
+  const fps = +$("exportFps").value;
+  const status = $("exportStatus"), bar = $("exportBar");
+  status.className = ""; status.textContent = "Loading encoder…"; bar.style.width = "0";
+  $("exportGo").disabled = true;
+  pause();
+  try {
+    const mb = await import("/static/mediabunny.min.mjs");
+    if (!(await mb.canEncodeVideo("avc")) || !(await mb.canEncodeAudio("aac"))) {
+      throw new Error("This browser cannot encode H.264/AAC. Chrome or Edge can.");
+    }
+    const rate = bps();
+    const tail = 1.5;
+    const totalSec = (endBeat - startBeat) / rate + tail;
+
+    status.textContent = "Rendering audio…";
+    const off = new OfflineAudioContext(2, Math.ceil(totalSec * 48000), 48000);
+    const offMaster = off.createGain(); offMaster.gain.value = 0.8; offMaster.connect(off.destination);
+    for (const n of data.notes) playSample(off, offMaster, n.pitch, (n.onset - startBeat) / rate, n.duration / rate);
+    const rendered = await off.startRendering();
+
+    const output = new mb.Output({ format: new mb.Mp4OutputFormat({ fastStart: "in-memory" }), target: new mb.BufferTarget() });
+    const c = document.createElement("canvas"); c.width = W; c.height = H;
+    const cctx = c.getContext("2d");
+    const videoSource = new mb.CanvasSource(c, { codec: "avc", quality: new mb.Quality({ bitrate: W * H * fps * 0.12 }) });
+    const audioSource = new mb.AudioBufferSource({ codec: "aac", quality: new mb.Quality({ bitrate: 192e3 }) });
+    output.addVideoTrack(videoSource, { frameRate: fps });
+    output.addAudioTrack(audioSource);
+    await output.start();
+    await audioSource.add(rendered);
+
+    const g = geometry(W, H);
+    const frames = Math.ceil(totalSec * fps);
+    const exportOpts = { ...opts, rate, suspects: $("exportSuspects").checked };
+    for (let i = 0; i < frames; i++) {
+      const t = i / fps;
+      draw(cctx, g, startBeat + t * rate, exportOpts, data);
+      await videoSource.add(t, 1 / fps);
+      if (i % 15 === 0) {
+        bar.style.width = (i / frames * 100) + "%";
+        status.textContent = "Rendering video, " + fmt(t) + " of " + fmt(totalSec);
+        await new Promise((r) => setTimeout(r));
+      }
+    }
+    status.textContent = "Finishing…";
+    await output.finalize();
+    const blob = new Blob([output.target.buffer], { type: "video/mp4" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = score.name + ".mp4";
+    document.body.appendChild(a); a.click(); a.remove();
+    bar.style.width = "100%";
+    status.innerHTML = "";
+    const link = document.createElement("a");
+    link.className = "saved"; link.href = url; link.download = a.download;
+    link.textContent = "Saved " + a.download + " (" + (blob.size / 1048576).toFixed(1) + " MB). Click to save again.";
+    status.appendChild(link);
+  } catch (err) {
+    status.className = "error";
+    status.textContent = "Export failed: " + (err && err.message ? err.message : err);
+  } finally {
+    $("exportGo").disabled = false;
+  }
+}
+
+// ---------- boot ----------
+async function boot() {
+  loadKnobs();
+  applyKnobs();
+  for (const el of [knobs.speed, knobs.scale, knobs.width]) {
+    el.addEventListener("input", () => {
+      if (el === knobs.speed && playing) { const b = currentBeat(); applyKnobs(); cutLive(); anchor(b); return; }
+      applyKnobs();
+    });
+  }
+  $("style").addEventListener("change", applyKnobs);
+  $("measureLines").addEventListener("change", applyKnobs);
+  $("suspects").addEventListener("change", applyKnobs);
+  $("stylesLink").href = "/jobs/" + jobId + "/styles";
+  resize();
+  window.addEventListener("resize", resize);
+  requestAnimationFrame(frame);
+
+  const [payload] = await Promise.all([
+    fetch("/jobs/" + jobId + "/notes").then((r) => { if (!r.ok) throw new Error("notes " + r.status); return r.json(); }),
+    loadPiano(),
+  ]);
+  score = payload;
+  const notes = payload.notes.slice().sort((a, b) => a.onset - b.onset);
+  data = { notes, measures: payload.measures, maxDuration: notes.reduce((m, n) => Math.max(m, n.duration), 1) };
+  const lastEnd = notes.reduce((m, n) => Math.max(m, n.onset + n.duration), 0);
+  endBeat = Math.max(payload.length, lastEnd) + 1;
+  startBeat = -Math.max(2, Math.min(8, geometry(cssW, cssH).kbTop / opts.scale));
+  beat = startBeat;
+  $("title").textContent = payload.name;
+  document.title = payload.name + " · Synthy";
+  $("overlay").hidden = true;
+  $("playBtn").disabled = false;
+  $("exportBtn").disabled = false;
+
+  $("playBtn").addEventListener("click", () => (playing ? pause() : play()));
+  $("seek").addEventListener("input", (e) => seek(startBeat + (+e.target.value / 10000) * (endBeat - startBeat)));
+  $("exportBtn").addEventListener("click", () => { $("exportPanel").hidden = false; });
+  $("exportClose").addEventListener("click", () => { $("exportPanel").hidden = true; });
+  $("exportGo").addEventListener("click", exportMp4);
+  window.addEventListener("keydown", (e) => {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+    if (e.code === "Space") { e.preventDefault(); playing ? pause() : play(); }
+    else if (e.code === "ArrowLeft") seek(currentBeat() - 4);
+    else if (e.code === "ArrowRight") seek(currentBeat() + 4);
+    else if (e.code === "Home") seek(startBeat);
+  });
+}
+
+boot().catch((err) => {
+  $("overlay").hidden = false;
+  $("overlay").textContent = "Could not load the piece: " + err.message;
+});
+</script>
+</body>
+</html>

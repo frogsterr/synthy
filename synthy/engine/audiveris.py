@@ -1,9 +1,11 @@
 """Audiveris 5.x batch engine.
 
-Install: extract the Ubuntu 22.04 .deb from the Audiveris GitHub release
-into ~/.local/opt/audiveris (no root needed) and drop eng.traineddata
-into ~/.local/share/AudiverisLtd/audiveris/tessdata. Override the binary
-with SYNTHY_AUDIVERIS and the OCR data with TESSDATA_PREFIX.
+Install: on Linux extract the Ubuntu .deb from the Audiveris GitHub
+release into ~/.local/opt/audiveris (no root needed); on macOS copy
+Audiveris.app from the .dmg into ~/Applications or /Applications. Drop
+eng.traineddata into ~/.local/share/AudiverisLtd/audiveris/tessdata.
+Override the binary with SYNTHY_AUDIVERIS and the OCR data with
+TESSDATA_PREFIX.
 """
 
 from __future__ import annotations
@@ -15,7 +17,11 @@ from pathlib import Path
 from synthy.engine.base import EngineError
 
 ENV_BINARY = "SYNTHY_AUDIVERIS"
-DEFAULT_BINARY = Path.home() / ".local/opt/audiveris/bin/Audiveris"
+DEFAULT_BINARIES = (
+    Path.home() / ".local/opt/audiveris/bin/Audiveris",
+    Path.home() / "Applications/Audiveris.app/Contents/MacOS/Audiveris",
+    Path("/Applications/Audiveris.app/Contents/MacOS/Audiveris"),
+)
 DEFAULT_TESSDATA = Path.home() / ".local/share/AudiverisLtd/audiveris/tessdata"
 LOG_NAME = "audiveris.log"
 
@@ -23,7 +29,7 @@ LOG_NAME = "audiveris.log"
 def find_audiveris() -> Path | None:
     env = os.environ.get(ENV_BINARY)
     candidates = [Path(env)] if env else []
-    candidates.append(DEFAULT_BINARY)
+    candidates.extend(DEFAULT_BINARIES)
     for c in candidates:
         if c.is_file() and os.access(c, os.X_OK):
             return c
@@ -40,7 +46,8 @@ class AudiverisEngine:
     def command(self, pages: list[Path], out_dir: Path) -> list[str]:
         if self.binary is None:
             raise EngineError(
-                f"Audiveris not found. Set {ENV_BINARY} or install it at {DEFAULT_BINARY}"
+                f"Audiveris not found. Set {ENV_BINARY} or install it at one of "
+                + ", ".join(str(p) for p in DEFAULT_BINARIES)
             )
         return [str(self.binary), "-batch", "-transcribe", "-export", "-output", str(out_dir),
                 "--", *(str(p) for p in pages)]

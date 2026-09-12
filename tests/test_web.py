@@ -54,6 +54,21 @@ def test_job_lifecycle_and_download(tmp_path):
     assert 'filename="nocturne.mid"' in midi.headers["content-disposition"]
     assert midi.content[:4] == b"MThd"
 
+    notes = client.get(f"/jobs/{job_id}/notes").json()
+    assert notes["name"] == "nocturne" and notes["tempo"] == 96
+    assert notes["length"] == 16.0
+    assert [m["start"] for m in notes["measures"]] == [0.0, 4.0, 8.0, 12.0]
+    assert all(m["length"] == 4.0 and not m["suspect"] for m in notes["measures"])
+    assert len(notes["notes"]) == 4 * 6
+    assert notes["notes"][0] == {"hand": 1, "pitch": 72, "onset": 0.0, "duration": 1.0}
+    assert {n["hand"] for n in notes["notes"]} == {1, 2}
+
+    play = client.get(f"/jobs/{job_id}/play")
+    assert play.status_code == 200 and "<canvas" in play.text
+    assert client.get(f"/jobs/{job_id}/styles").status_code == 200
+    assert client.get("/static/piano.js").status_code == 200
+    assert client.get("/static/render.js").headers["content-type"].startswith("text/javascript")
+
 
 def test_engine_failure_reports_error(tmp_path):
     client = _client(tmp_path, FakeEngine(fail_pages={1}))
@@ -62,6 +77,8 @@ def test_engine_failure_reports_error(tmp_path):
     assert body["status"] == "error"
     assert "nothing usable" in body["message"]
     assert client.get(f"/jobs/{job_id}/midi").status_code == 409
+    assert client.get(f"/jobs/{job_id}/notes").status_code == 409
+    assert client.get(f"/jobs/{job_id}/play").status_code == 409
 
 
 def test_validation(tmp_path):

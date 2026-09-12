@@ -60,6 +60,7 @@ class MeasureReport:
 @dataclass
 class ConversionResult:
     midi_path: Path
+    events: list[NoteEvent]
     reports: list[MeasureReport]
     pages: list[int]
     failed_pages: list[int]

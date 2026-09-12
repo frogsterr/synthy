@@ -66,5 +66,5 @@ def convert(
     events, reports = normalize(merge_scores(scores))
     write_midi(events, out_midi, tempo_bpm=tempo_bpm)
     notify("assemble", len(rendered), len(rendered))
-    return ConversionResult(midi_path=out_midi, reports=reports, pages=page_numbers,
+    return ConversionResult(midi_path=out_midi, events=events, reports=reports, pages=page_numbers,
                             failed_pages=failed, engine_name=engine.name)
