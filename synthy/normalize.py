@@ -12,12 +12,13 @@ from __future__ import annotations
 from collections import Counter
 from fractions import Fraction
 
-from synthy.model import LEFT_HAND, RIGHT_HAND, MeasureReport, NoteEvent, RawScore
+from synthy.model import LEFT_HAND, RIGHT_HAND, MeasureReport, NoteEvent, RawMeasure, RawScore
 
 SUSPECT_MIN = Fraction(4, 5)      # scale below this (raw > 125% of expected) is suspect
 SUSPECT_MAX = Fraction(5, 4)      # scale above this (raw < 80% of expected) is suspect
 DEFAULT_MEASURE = Fraction(4)     # when nothing at all is known
 TIE_TOLERANCE = Fraction(1, 16)   # quarters; how far apart a tied pair may be
+UNISON_TOLERANCE = Fraction(1, 16)  # quarters; same pitch struck this close is one key press
 STAVES = (RIGHT_HAND, LEFT_HAND)
 
 
@@ -48,40 +49,59 @@ def normalize(score: RawScore) -> tuple[list[NoteEvent], list[MeasureReport]]:
             pending.append((ev, n.tie_start, n.tie_stop))
         start += target
 
-    events = _merge_ties(pending)
+    events = _merge_unisons(_merge_ties(pending))
     events.sort()
     return events, reports
 
 
 def _expected_lengths(score: RawScore) -> list[Fraction]:
-    """Expected length per measure: last TS seen, else first TS ahead, else mode of raw lengths."""
-    n = len(score.measures)
-    out: list[Fraction | None] = [None] * n
+    """Expected length per measure: the last TS seen. Measures before the first TS
+    use the mode of their own raw lengths; a later TS is borrowed only when they
+    carry no notes at all, because OMR often misses the opening TS and a TS found
+    pages later may belong to a meter change."""
+    out: list[Fraction | None] = []
     current: Fraction | None = None
-    for i, m in enumerate(score.measures):
+    for m in score.measures:
         if m.time_signature is not None:
             current = m.time_signature
-        out[i] = current
-    first_known = next((v for v in out if v is not None), None)
-    if first_known is None:
-        first_known = _mode_length(score)
-    return [v if v is not None else first_known for v in out]
+        out.append(current)
+    lead = sum(1 for v in out if v is None)
+    if lead:
+        first_known = out[lead] if lead < len(out) else None
+        fill = _mode_length(score.measures[:lead]) or first_known or DEFAULT_MEASURE
+        out[:lead] = [fill] * lead
+    return out  # type: ignore[return-value]
 
 
-def _mode_length(score: RawScore) -> Fraction:
+def _mode_length(measures: list[RawMeasure]) -> Fraction | None:
+    """Mode of the shorter staff per measure: engine mistakes mostly add duration."""
     counts: Counter[Fraction] = Counter()
-    for m in score.measures:
-        for length in m.staff_lengths.values():
-            if length > 0:
-                counts[_round_half(length)] += 1
+    for m in measures:
+        lengths = [v for v in m.staff_lengths.values() if v > 0]
+        if lengths:
+            counts[_round_half(min(lengths))] += 1
     if not counts:
-        return DEFAULT_MEASURE
+        return None
     best = max(counts.items(), key=lambda kv: (kv[1], -kv[0]))
     return best[0]
 
 
 def _round_half(value: Fraction) -> Fraction:
     return Fraction(round(value * 2), 2)
+
+
+def _merge_unisons(events: list[NoteEvent]) -> list[NoteEvent]:
+    """One key cannot be struck twice at once: a note shared by two voices or both
+    staves becomes a single event that lasts as long as the longer of the two."""
+    events.sort(key=lambda e: (e.pitch, e.onset, e.staff))
+    result: list[NoteEvent] = []
+    for ev in events:
+        prev = result[-1] if result else None
+        if prev is not None and prev.pitch == ev.pitch and ev.onset - prev.onset <= UNISON_TOLERANCE:
+            prev.duration = max(prev.onset + prev.duration, ev.onset + ev.duration) - prev.onset
+            continue
+        result.append(ev)
+    return result
 
 
 def _merge_ties(pending: list[tuple[NoteEvent, bool, bool]]) -> list[NoteEvent]:

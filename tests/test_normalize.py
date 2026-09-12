@@ -53,7 +53,7 @@ def test_missing_time_signature_uses_mode_of_lengths():
     assert events_of(RIGHT_HAND, events)[1] == (F(4), F(4), 60)
 
 
-def test_later_time_signature_applies_backwards_and_forwards():
+def test_time_signature_applies_forwards_until_the_next_one():
     ms = [
         measure(0, [note(RIGHT_HAND, 0, 3), note(LEFT_HAND, 0, 3)], ts=None),
         measure(1, [note(RIGHT_HAND, 0, 3), note(LEFT_HAND, 0, 3)], ts=None),
@@ -64,6 +64,23 @@ def test_later_time_signature_applies_backwards_and_forwards():
     _, reports = normalize(RawScore(ms))
     assert [r.expected for r in reports] == [F(3), F(3), F(3), F(2), F(2)]
     assert not any(r.suspect for r in reports)
+
+
+def test_measures_before_first_time_signature_trust_their_own_lengths():
+    # opening TS missed by the engine, a genuine 2/4 change arrives later
+    ms = [measure(i, [note(RIGHT_HAND, 0, 4), note(LEFT_HAND, 0, 4)], ts=None) for i in range(4)]
+    ms[1] = measure(1, [note(RIGHT_HAND, 0, 7), note(LEFT_HAND, 0, 4)], ts=None)
+    ms += [measure(4, [note(RIGHT_HAND, 0, 2), note(LEFT_HAND, 0, 2)], ts=2),
+           measure(5, [note(RIGHT_HAND, 0, 2), note(LEFT_HAND, 0, 2)], ts=None)]
+    _, reports = normalize(RawScore(ms))
+    assert [r.expected for r in reports] == [F(4)] * 4 + [F(2), F(2)]
+    assert [r.suspect for r in reports] == [False, True, False, False, False, False]
+
+
+def test_empty_measures_before_first_time_signature_borrow_it():
+    ms = [measure(0, [], ts=None), measure(1, [note(RIGHT_HAND, 0, 3), note(LEFT_HAND, 0, 3)], ts=3)]
+    _, reports = normalize(RawScore(ms))
+    assert [r.expected for r in reports] == [F(3), F(3)]
 
 
 def test_absolute_onsets_accumulate_expected_lengths():
@@ -89,6 +106,20 @@ def test_tie_stop_without_start_stays_a_note():
     ms = [measure(0, [note(RIGHT_HAND, 0, 4, 60, tie_stop=True), note(LEFT_HAND, 0, 4, 48)])]
     events, _ = normalize(RawScore(ms))
     assert events_of(RIGHT_HAND, events) == [(F(0), F(4), 60)]
+
+
+def test_same_note_in_two_voices_becomes_one_event():
+    ms = [measure(0, [note(RIGHT_HAND, 0, 1, 60), note(RIGHT_HAND, 0, 2, 60), note(RIGHT_HAND, 2, 2, 60),
+                      note(LEFT_HAND, 0, 4, 48)])]
+    events, _ = normalize(RawScore(ms))
+    assert events_of(RIGHT_HAND, events) == [(F(0), F(2), 60), (F(2), F(2), 60)]
+
+
+def test_unison_across_hands_keeps_the_earlier_hand():
+    ms = [measure(0, [note(RIGHT_HAND, 0, 4, 60), note(LEFT_HAND, 0, 2, 60), note(LEFT_HAND, 2, 2, 48)])]
+    events, _ = normalize(RawScore(ms))
+    assert events_of(RIGHT_HAND, events) == [(F(0), F(4), 60)]
+    assert events_of(LEFT_HAND, events) == [(F(2), F(2), 48)]
 
 
 def test_grace_notes_dropped():
